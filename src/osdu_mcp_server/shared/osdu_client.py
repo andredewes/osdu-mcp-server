@@ -14,6 +14,7 @@ from aiohttp import ClientSession, ClientTimeout
 from .auth_handler import AuthHandler
 from .config_manager import ConfigManager
 from .exceptions import OSMCPAPIError, OSMCPConnectionError
+from .request_context import get_request_data_partition, get_request_server_url
 
 
 class OsduClient:
@@ -32,6 +33,34 @@ class OsduClient:
         self._base_url = config.get_required("server", "url")
         self._data_partition = config.get_required("server", "data_partition")
         self._timeout = config.get("server", "timeout", 30)
+
+    def _get_base_url(self) -> str:
+        """Get the base URL for API requests.
+
+        Checks request context first for per-request override,
+        falls back to configured base URL.
+
+        Returns:
+            OSDU server base URL
+        """
+        context_url = get_request_server_url()
+        if context_url:
+            return context_url
+        return self._base_url
+
+    def _get_data_partition(self) -> str:
+        """Get the data partition for API requests.
+
+        Checks request context first for per-request override,
+        falls back to configured data partition.
+
+        Returns:
+            Data partition ID
+        """
+        context_partition = get_request_data_partition()
+        if context_partition:
+            return context_partition
+        return self._data_partition
 
     async def _ensure_session(self) -> ClientSession:
         """Ensure HTTP session is created.
@@ -64,7 +93,7 @@ class OsduClient:
             OSMCPAPIError: For API errors
             OSMCPConnectionError: For connection errors
         """
-        url = urljoin(self._base_url, path)
+        url = urljoin(self._get_base_url(), path)
         session = await self._ensure_session()
 
         # Set up headers
@@ -72,7 +101,7 @@ class OsduClient:
         headers["Authorization"] = (
             f"Bearer {await self.auth_handler.get_access_token()}"
         )
-        headers["data-partition-id"] = self._data_partition
+        headers["data-partition-id"] = self._get_data_partition()
         headers["Content-Type"] = "application/json"
         kwargs["headers"] = headers
 

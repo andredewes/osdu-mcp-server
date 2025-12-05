@@ -295,7 +295,11 @@ class AuthHandler:
             )
 
     async def get_access_token(self) -> str:
-        """Get token from detected provider.
+        """Get token from detected provider or request context.
+
+        Priority order:
+        1. Request context token (from HTTP header osdu_mcp_user_token)
+        2. Configured authentication mode (USER_TOKEN, AZURE, AWS, GCP)
 
         Returns:
             Raw access token string (without "Bearer " prefix).
@@ -304,6 +308,16 @@ class AuthHandler:
         Raises:
             OSMCPAuthError: If token retrieval fails
         """
+        # Check for request-scoped token first (from HTTP header)
+        from .request_context import get_request_user_token
+
+        request_token = get_request_user_token()
+        if request_token:
+            logger.debug("Using token from request context (HTTP header)")
+            self._validate_jwt_token(request_token)
+            return request_token
+
+        # Fall back to configured authentication mode
         if self.mode == AuthenticationMode.USER_TOKEN:
             return self._get_user_token()
         elif self.mode == AuthenticationMode.AZURE:

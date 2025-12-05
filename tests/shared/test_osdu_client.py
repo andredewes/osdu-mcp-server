@@ -258,3 +258,137 @@ async def test_osdu_client_correctly_formats_headers():
         assert headers["Content-Type"] == "application/json"
 
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_osdu_client_uses_request_context_server_url():
+    """Test that client uses server URL from request context when available."""
+    from osdu_mcp_server.shared.request_context import (
+        clear_request_server_url,
+        set_request_server_url,
+    )
+
+    mock_config = MagicMock()
+    mock_config.get_required.side_effect = lambda section, key: {
+        ("server", "url"): "https://default-osdu.com",
+        ("server", "data_partition"): "default-partition",
+    }[(section, key)]
+    mock_config.get.return_value = 30
+
+    mock_auth = AsyncMock()
+    mock_auth.get_access_token.return_value = "test-token"
+
+    try:
+        # Set a per-request server URL
+        set_request_server_url("https://override-osdu.com")
+
+        with aioresponses() as mocked:
+            # Mock response at the OVERRIDE URL
+            mocked.get(
+                "https://override-osdu.com/api/test",
+                payload={"result": "from-override"},
+                status=200,
+            )
+
+            client = OsduClient(mock_config, mock_auth)
+            result = await client.get("/api/test")
+
+            # Verify we got the response from the override URL
+            assert result == {"result": "from-override"}
+            await client.close()
+    finally:
+        clear_request_server_url()
+
+
+@pytest.mark.asyncio
+async def test_osdu_client_uses_request_context_data_partition():
+    """Test that client uses data partition from request context when available."""
+    from osdu_mcp_server.shared.request_context import (
+        clear_request_data_partition,
+        set_request_data_partition,
+    )
+
+    mock_config = MagicMock()
+    mock_config.get_required.side_effect = lambda section, key: {
+        ("server", "url"): "https://test-osdu.com",
+        ("server", "data_partition"): "default-partition",
+    }[(section, key)]
+    mock_config.get.return_value = 30
+
+    mock_auth = AsyncMock()
+    mock_auth.get_access_token.return_value = "test-token"
+
+    try:
+        # Set a per-request data partition
+        set_request_data_partition("override-partition")
+
+        with patch(
+            "osdu_mcp_server.shared.osdu_client.ClientSession"
+        ) as mock_session_class:
+            mock_response = AsyncMock()
+            mock_response.status = 200
+            mock_response.json.return_value = {"result": "success"}
+
+            mock_context = AsyncMock()
+            mock_context.__aenter__.return_value = mock_response
+            mock_context.__aexit__.return_value = None
+
+            mock_session = AsyncMock()
+            mock_session.closed = False
+            mock_session.request = MagicMock(return_value=mock_context)
+            mock_session_class.return_value = mock_session
+
+            client = OsduClient(mock_config, mock_auth)
+            await client.get("/api/test")
+
+            # Verify data-partition-id header uses the override
+            call_args = mock_session.request.call_args
+            headers = call_args[1]["headers"]
+            assert headers["data-partition-id"] == "override-partition"
+
+            await client.close()
+    finally:
+        clear_request_data_partition()
+
+
+@pytest.mark.asyncio
+async def test_osdu_client_falls_back_to_config_when_no_request_context():
+    """Test that client uses config values when no request context is set."""
+    mock_config = MagicMock()
+    mock_config.get_required.side_effect = lambda section, key: {
+        ("server", "url"): "https://config-osdu.com",
+        ("server", "data_partition"): "config-partition",
+    }[(section, key)]
+    mock_config.get.return_value = 30
+
+    mock_auth = AsyncMock()
+    mock_auth.get_access_token.return_value = "test-token"
+
+    with patch(
+        "osdu_mcp_server.shared.osdu_client.ClientSession"
+    ) as mock_session_class:
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json.return_value = {"result": "success"}
+
+        mock_context = AsyncMock()
+        mock_context.__aenter__.return_value = mock_response
+        mock_context.__aexit__.return_value = None
+
+        mock_session = AsyncMock()
+        mock_session.closed = False
+        mock_session.request = MagicMock(return_value=mock_context)
+        mock_session_class.return_value = mock_session
+
+        client = OsduClient(mock_config, mock_auth)
+        await client.get("/api/test")
+
+        # Verify URL and headers use config values
+        call_args = mock_session.request.call_args
+        url = call_args[0][1]  # Second positional arg is URL
+        headers = call_args[1]["headers"]
+
+        assert "config-osdu.com" in url
+        assert headers["data-partition-id"] == "config-partition"
+
+        await client.close()

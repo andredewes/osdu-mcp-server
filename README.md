@@ -389,6 +389,94 @@ The MCP server uses structured JSON logging that follows [ADR-016](docs/adr/016-
 
 Valid logging levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
 
+## HTTP Transport
+
+The server supports multiple transport modes for different deployment scenarios:
+
+### Transport Options
+
+| Transport | Use Case | Command |
+|-----------|----------|---------|
+| `stdio` (default) | CLI/MCP clients | `uv run osdu-mcp-server` |
+| `streamable-http` | HTTP-based integration | `uv run osdu-mcp-server --transport streamable-http` |
+| `sse` | Server-Sent Events | `uv run osdu-mcp-server --transport sse` |
+
+### Running as HTTP Server
+
+```bash
+# Start with streamable HTTP transport (recommended for HTTP)
+uv run osdu-mcp-server --transport streamable-http --host 0.0.0.0 --port 8000
+
+# Or use uvicorn directly (production recommended)
+uv run uvicorn osdu_mcp_server.http_app:app --host 0.0.0.0 --port 8000
+```
+
+The HTTP server provides:
+- Health check endpoint at `/health`
+- MCP endpoint at `/mcp`
+- CORS support for browser clients
+
+### HTTP Header Authentication
+
+When running in HTTP mode, you can pass authentication tokens via HTTP headers instead of environment variables:
+
+```bash
+# Pass token in request header
+curl -X POST http://localhost:8000/mcp \
+  -H "osdu_mcp_user_token: <your-oauth-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"method": "tools/list"}'
+```
+
+**Supported header names** (case-insensitive):
+- `osdu_mcp_user_token`
+- `osdu-mcp-user-token`  
+- `x-osdu-mcp-user-token`
+
+The token can include or omit the `Bearer ` prefix - it will be handled correctly.
+
+**Token Priority**:
+1. HTTP header token (highest priority when present)
+2. `OSDU_MCP_USER_TOKEN` environment variable
+3. Configured cloud provider authentication (Azure, AWS, GCP)
+
+### Per-Request Configuration
+
+When running in HTTP mode, you can override the OSDU server URL and data partition per-request using HTTP headers. This enables a single MCP server instance to serve multiple users with different configurations:
+
+```bash
+# Pass configuration in request headers
+curl -X POST http://localhost:8000/mcp \
+  -H "osdu_mcp_user_token: <your-oauth-token>" \
+  -H "osdu_mcp_server_url: https://your-osdu-instance.com" \
+  -H "osdu_mcp_data_partition: your-partition-id" \
+  -H "Content-Type: application/json" \
+  -d '{"method": "tools/list"}'
+```
+
+**Supported server URL header names** (case-insensitive):
+- `osdu_mcp_server_url`
+- `osdu-mcp-server-url`
+- `x-osdu-mcp-server-url`
+
+**Supported data partition header names** (case-insensitive):
+- `osdu_mcp_data_partition`
+- `osdu-mcp-data-partition`
+- `x-osdu-mcp-data-partition`
+
+**Configuration Priority** (for server URL and data partition):
+1. HTTP header value (highest priority when present)
+2. Environment variable (`OSDU_MCP_SERVER_URL`, `OSDU_MCP_SERVER_DATA_PARTITION`)
+3. YAML configuration file
+
+### Environment Variables for HTTP Transport
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OSDU_MCP_TRANSPORT` | `stdio` | Default transport type |
+| `OSDU_MCP_HOST` | `127.0.0.1` | Host to bind for HTTP transports |
+| `OSDU_MCP_PORT` | `8000` | Port for HTTP transports |
+
 ## Usage
 
 ### Health Check
